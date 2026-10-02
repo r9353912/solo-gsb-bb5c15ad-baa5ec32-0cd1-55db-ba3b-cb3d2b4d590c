@@ -33,8 +33,14 @@ withYard(original.id, () => {
 
 // 服务重启后按各站场分别复核：待生效封锁转已生效、等待申请自动兑现、
 // 延时取消按原 release_at 复核（副本不重新计时、不重复兑现）。
+// 暂停中的副本跨重启保持冻结：复核/兑现一律跳过，恢复后再按原规则处理。
+const pauseCtl = require('./pause');
 for (const y of yards.listYards()) {
   withYard(y.id, () => {
+    if (pauseCtl.isPaused()) {
+      console.log(`[startup] 站场 #${y.id} ${y.name}：副本暂停中，启动复核/定时推进跳过（恢复后继续）`);
+      return;
+    }
     try {
       const activated = blockade.refreshBlockadeStates('server_start');
       if (activated.length) {

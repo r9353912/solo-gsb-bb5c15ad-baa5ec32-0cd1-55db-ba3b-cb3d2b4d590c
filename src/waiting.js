@@ -180,7 +180,11 @@ function cancelByApplicant(applicant, reason) {
         WHERE applicant=? AND status='waiting'`
     ).run(reason || '申请人退出登录，等待申请撤销', applicant);
   })();
-  sweepFulfillments('applicant_logout');
+  // 暂停副本：退出仍按既有规则撤销本人等待申请，但不得在暂停副本兑现后项
+  // （自动推进冻结，恢复后由恢复扫描/其他触发点统一兑现）。
+  if (!require('./pause').isPaused()) {
+    sweepFulfillments('applicant_logout');
+  }
 }
 
 /* --------------------------- 定义变更 / 管理员重置 --------------------------- */
@@ -242,6 +246,13 @@ function cancelAllByReset(reasonText) {
 function sweepFulfillments(reason) {
   const db = getDb();
   const fulfilled = [];
+
+  // 暂停副本：等待兑现不得推进（恢复后由恢复扫描统一兑现）。直接短路，
+  // 保证任何调用路径（提交/撤销后的触发点、退出登录、各站场启动/定时扫描等）
+  // 都不会在暂停副本兑现出新进路实例。
+  if (require('./pause').isPaused()) {
+    return { attempted: false, fulfilled };
+  }
 
   // SAVEPOINT 包装（在外层扫描事务内调用时自动转为 SAVEPOINT/RELEASE/ROLLBACK TO）
   const attempt = db.transaction((app) => {

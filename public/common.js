@@ -112,7 +112,7 @@ const App = (() => {
   /**
    * 渲染顶栏"当前站场"选择条（挂到 #yardBar 容器）。
    * 每个登录会话都可选择当前站场；未选择时使用原站场。
-   * 管理员另显示"＋ 创建演练副本"。
+   * 管理员另显示"＋ 创建演练副本"与暂停/恢复按钮。
    */
   async function renderYardBar(activeContainer) {
     const host = document.getElementById('yardBar');
@@ -128,7 +128,7 @@ const App = (() => {
     host.appendChild(label);
     const sel = html('select', { class: 'yard-select', title: '选择当前站场（原站场或命名演练副本）' });
     for (const y of yards) {
-      const text = y.isOriginal ? '① 原站场' : `🧪 ${y.name}`;
+      const text = y.isOriginal ? '① 原站场' : `🧪 ${y.name}${y.paused ? '（已暂停）' : ''}`;
       const o = html('option', { value: String(y.id) }, text);
       if (y.id === yardId()) o.selected = true;
       sel.appendChild(o);
@@ -143,14 +143,102 @@ const App = (() => {
     if (cur && !cur.isOriginal) {
       host.appendChild(html('span', { class: 'yard-badge' }, '演练副本'));
     }
+    if (cur && cur.paused) {
+      host.appendChild(html('span', { class: 'yard-badge paused', title: '副本暂停中：手工业务变更与自动推进均冻结' }, '⏸ 已暂停'));
+    }
 
     if (role() === 'admin') {
       const createBtn = html('button', { class: 'ghost small', style: 'margin-left:10px;' }, '＋ 从原站场创建演练副本');
       createBtn.addEventListener('click', () => openCreateYardModal());
       host.appendChild(createBtn);
+
+      // 暂停/恢复：原站场不可暂停；仅当当前选择为命名副本时显示
+      if (cur && !cur.isOriginal) {
+        if (cur.paused) {
+          const resumeBtn = html('button', { class: 'primary small', id: 'resumeYardBtn' }, '▶ 恢复该副本');
+          resumeBtn.addEventListener('click', () => resumeCurrentYard(cur));
+          host.appendChild(resumeBtn);
+        } else {
+          const pauseBtn = html('button', { class: 'ghost small', id: 'pauseYardBtn' }, '⏸ 暂停该副本');
+          pauseBtn.addEventListener('click', () => pauseCurrentYard(cur));
+          host.appendChild(pauseBtn);
+        }
+      }
     }
-    host.appendChild(html('span', { class: 'muted', style: 'margin-left:10px;font-size:12px;' },
-      '所有操作（编辑/排路/走行/等待/取消/封锁/交接/重置）仅作用于当前站场'));
+  }
+
+  /** 管理员暂停当前选中的命名副本（原站场由服务端拒绝） */
+  async function pauseCurrentYard(yard) {
+    if (!confirm(`确定暂停演练副本「${yard.name}」？\n\n` +
+      '暂停期间该副本的排路、走行、等待、取消、封锁、交接单、站场编辑与重置等手工业务变更将被拒绝；' +
+      '只读查询与会话切换照常；定时走行、延时取消、封锁复核与等待兑现一律暂停（活动计划下一步与' +
+      '待处理延时取消的剩余等待会被冻结，恢复后继续计时）。原站场与其他副本不受影响。')) return;
+    try {
+      await api(`/api/admin/yards/${yard.id}/pause`, { method: 'POST' });
+      toast(`副本「${yard.name}」已暂停`, 'ok', 4000);
+      location.reload();
+    } catch (e) { toast(e.message, 'err', 6000); }
+  }
+
+  /** 管理员恢复当前选中的副本（冻结的剩余等待继续计时，逾期事项立即按原规则复核） */
+  async function resumeCurrentYard(yard) {
+    if (!confirm(`确定恢复演练副本「${yard.name}」？\n\n` +
+      '恢复后定时走行计划下一步与待处理延时取消的剩余等待继续计时；暂停前已到期而未处理的事项，' +
+      '将立即按原规则复核（可能立即走行或解除进路）。')) return;
+    try {
+      const data = await api(`/api/admin/yards/${yard.id}/resume`, { method: 'POST' });
+      const p = data.processed || {};
+      const parts = [];
+      if (Array.isArray(p.waitingFulfilled) && p.waitingFulfilled.length)
+        parts.push(`兑现等待 #${p.waitingFulfilled.join('、#')}`);
+      if (p.cancellations && (p.cancellations.released.length || p.cancellations.aborted.length))
+        parts.push(`处理延时取消（解除 ${p.cancellations.released.length}、终止 ${p.cancellations.aborted.length}）`);
+      if (Array.isArray(p.blockadesActivated) && p.blockadesActivated.length)
+        parts.push(`封锁转已生效 #${p.blockadesActivated.join('、#')}`);
+      if ((p.movementPlans && p.movementPlans.processed.length))
+        parts.push(`推进定时走行计划 ${p.movementPlans.processed.length} 个`);
+      toast(`副本「${yard.name}」已恢复` + (parts.length ? '；恢复后立即复核：' + parts.join('，') : ''),
+        'ok', 6500);
+      location.reload();
+    } catch (e) { toast(e.message, 'err', 6000); }
+  }
+
+  /**
+   * 在指定容器顶部渲染暂停横幅（管理台/值班台均调用；原站场不显示）。
+   * @param {Object} state /api/state 或 /api/admin/state 的 state（含 pause）
+   */
+  function renderPauseBanner(host, state) {
+    if (!host || !state) return;
+    host.innerHTML = '';                 // 轮询重复渲染时先清空，避免横幅叠加
+    if (!state.pause) return;
+    const p = state.pause;
+    const banner = html('div', { class: 'pause-banner' });
+    banner.appendChild(html('b', {}, '⏸ 演练副本已暂停'));
+    banner.appendChild(document.createTextNode(
+      `　暂停人：${p.pausedBy}　暂停时间：${p.pausedAtText}　已暂停 `));
+    const dur = html('b', { id: 'pauseDuration' }, '');
+    banner.appendChild(dur);
+    banner.appendChild(document.createTextNode('。'));
+    banner.appendChild(html('span', { class: 'muted' },
+      '排路、走行、等待、取消、封锁、交接单、站场编辑与重置等手工变更一律拒绝；只读查询与会话切换照常。'));
+    host.insertBefore(banner, host.firstChild);
+    const base = p.pausedAt;
+    const tick = () => {
+      const node = document.getElementById('pauseDuration');
+      if (!node) return clearInterval(timer);
+      node.textContent = formatDur(Date.now() - base);
+    };
+    const timer = setInterval(tick, 1000);
+    tick();
+  }
+
+  function formatDur(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    if (h) return `${h} 时 ${m} 分 ${ss} 秒`;
+    if (m) return `${m} 分 ${ss} 秒`;
+    return `${ss} 秒`;
   }
 
   /** 管理员创建命名演练副本弹窗 */
@@ -209,7 +297,7 @@ const App = (() => {
 
   return {
     api, el, html, toast, token, setSession, clearSession, role, name,
-    yardId, yardName, setYard, chooseYard, syncYard, renderYardBar,
+    yardId, yardName, setYard, chooseYard, syncYard, renderYardBar, renderPauseBanner,
     OCC_TEXT, SIG_TEXT, POS_TEXT
   };
 })();

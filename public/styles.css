@@ -72,7 +72,28 @@ header.topbar button:hover { background: rgba(255, 255, 255, .28); }
   font-weight: 700;
   white-space: nowrap;
 }
+.yard-bar .yard-badge.paused {
+  background: #b03030;
+  color: #fff;
+}
 .yard-bar button.small { padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+
+/* 演练副本暂停横幅（管理台/值班台共用） */
+.pause-banner {
+  margin: 10px 14px 0;
+  padding: 9px 14px;
+  border-radius: 9px;
+  border: 1px solid #e4a8a8;
+  background: repeating-linear-gradient(45deg, #fdeeee, #fdeeee 12px, #fbe6e6 12px, #fbe6e6 24px);
+  color: #8f2323;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.pause-banner b { color: #b03030; }
+.pause-banner .muted { color: #9b5c5c; font-size: 12px; }
+/* 出现暂停横幅时压缩下方布局高度，避免页面整体溢出 */
+#pauseBannerHost:not(:empty) + .layout { height: auto; min-height: 0; }
+#pauseBannerHost:not(:empty) + .layout .panel-body { min-height: 60vh; }
 
 .layout {
   display: grid;

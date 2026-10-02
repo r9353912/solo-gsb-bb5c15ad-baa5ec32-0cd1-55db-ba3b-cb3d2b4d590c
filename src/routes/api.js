@@ -8,10 +8,33 @@ const cancellation = require('../cancellation');
 const blockade = require('../blockade');
 const handover = require('../handover');
 const movementPlan = require('../movement-plan');
+const pauseCtl = require('../pause');
 const { InterlockError } = require('../interlocking');
 
 const router = express.Router();
 router.use(requireAuth('dispatcher'));
+
+/**
+ * 暂停守卫：当前会话所选演练副本暂停中时，值班员一切手工业务变更
+ * （排路/走行/等待/取消/计划/交接单/扳岔/区段状态）一律拒绝；
+ * 只读 GET 与预检 POST /routes/:id/check 照常（会话切换在 /api/auth，不经此路由）。
+ */
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (/^\/routes\/[^/]+\/check$/.test(req.path)) return next();
+  if (pauseCtl.isPaused()) {
+    const p = pauseCtl.getPause();
+    return res.status(409).json({
+      ok: false,
+      code: 'YARD_PAUSED',
+      error: `当前演练副本已暂停（暂停人：${p.pausedBy}，${p.pausedAtText}），` +
+             '排路、走行、等待、取消、封锁与交接单等手工业务变更一律拒绝；' +
+             '只读查询可继续，恢复后再操作',
+      pause: p
+    });
+  }
+  next();
+});
 
 function wrap(fn) {
   return (req, res, next) => {

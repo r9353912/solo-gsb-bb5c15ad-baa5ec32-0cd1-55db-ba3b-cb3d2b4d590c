@@ -10,9 +10,32 @@ const blockade = require('../blockade');
 const handover = require('../handover');
 const yards = require('../yards');
 const movementPlan = require('../movement-plan');
+const pauseCtl = require('../pause');
 
 const router = express.Router();
 router.use(requireAuth('admin'));
+
+/**
+ * 暂停守卫：当前会话所选站场处于暂停中时，拒绝一切手工业务变更
+ * （站场编辑/封锁/重置等）。只读 GET 照常；保护时长设置（仅元数据）、
+ * 命名副本创建（作用于原站场）以及暂停/恢复接口自身豁免。
+ */
+const ADMIN_MUTATION_ALLOW = /^\/(yards|yards\/\d+\/(pause|resume)|settings\/cancel-protection)$/;
+router.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (ADMIN_MUTATION_ALLOW.test(req.path)) return next();
+  if (pauseCtl.isPaused()) {
+    const p = pauseCtl.getPause();
+    return res.status(409).json({
+      ok: false,
+      code: 'YARD_PAUSED',
+      error: `当前演练副本已暂停（暂停人：${p.pausedBy}，${p.pausedAtText}），` +
+             '站场编辑、封锁、重置等手工业务变更一律拒绝；只读查询可继续，恢复后再操作',
+      pause: p
+    });
+  }
+  next();
+});
 
 const ID_RE = /^[A-Za-z0-9_一-龥-]{1,20}$/;
 const NUM = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -43,10 +66,36 @@ router.get('/state', (req, res) => {
 
 /* ----------------------------- 命名演练副本 ----------------------------- */
 
-// 站场/副本列表（管理员视角；含当前选择）
+// 站场/副本列表（管理员视角；含当前选择与各站场暂停状态）
 router.get('/yards', (req, res) => {
-  res.json({ ok: true, yards: yards.listYards(), currentYardId: req.yard.id });
+  const pauseMap = pauseCtl.pauseMapAllYards();
+  const list = yards.listYards().map((y) => ({ ...y, paused: pauseMap.has(y.id) }));
+  res.json({ ok: true, yards: list, currentYardId: req.yard.id });
 });
+
+// 暂停命名演练副本（原站场不可暂停；重复暂停幂等返回，不重复调整到期时间）。
+// 可在 body 或查询参数指定 yardId，缺省作用于当前会话所选站场。
+router.post('/yards/:id/pause', wrap((req, res) => {
+  const yardId = Number((req.body || {}).yardId || req.params.id);
+  const result = pauseCtl.pauseYard(yardId, req.session.name);
+  res.status(result.changed ? 201 : 200).json({
+    ok: true, changed: result.changed, pause: result.pause,
+    yardId, yardName: yards.getYard(yardId).name
+  });
+}));
+
+// 恢复演练副本：冻结的计划下一步与延时取消剩余等待继续计时；
+// 暂停前已到期事项恢复后立即按原规则复核（未暂停时恢复 409）。
+router.post('/yards/:id/resume', wrap((req, res) => {
+  const yardId = Number((req.body || {}).yardId || req.params.id);
+  const result = pauseCtl.resumeYard(yardId, req.session.name);
+  res.json({
+    ok: true, changed: true, pause: result.pause,
+    yardId, yardName: yards.getYard(yardId).name,
+    frozenDeltaMs: result.frozenDeltaMs,
+    processed: result.processed
+  });
+}));
 
 // 从原站场创建命名演练副本（同事务复制定义/状态/锁与事件进度/未兑现等待/
 // 未完结延时取消与临时封锁；历史交接单留在原站场）。同名 409 拒绝。

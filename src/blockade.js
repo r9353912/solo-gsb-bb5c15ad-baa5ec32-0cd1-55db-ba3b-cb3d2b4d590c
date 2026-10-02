@@ -64,6 +64,8 @@ function canActivate(sectionId) {
 function refreshBlockadeStates(reason) {
   const db = getDb();
   const activated = [];
+  // 暂停副本：封锁待生效复核不得推进（恢复后由恢复扫描立即复核一次）。
+  if (require('./pause').isPaused()) return activated;
   db.transaction(() => {
     const pendings = db.prepare(
       `SELECT id, section_id FROM blockade_applications WHERE status='pending' ORDER BY id`

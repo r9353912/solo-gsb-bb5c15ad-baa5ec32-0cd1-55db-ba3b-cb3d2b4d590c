@@ -9,7 +9,7 @@ let editing = null;          // 当前右键/点击编辑对象
 
 const svg = document.getElementById('yard');
 const side = document.getElementById('side');
-const { el, html, api, toast, OCC_TEXT, syncYard, renderYardBar } = App;
+const { el, html, api, toast, OCC_TEXT, syncYard, renderYardBar, renderPauseBanner } = App;
 
 async function boot() {
   document.getElementById('meName').textContent = '管理员';
@@ -23,8 +23,7 @@ async function boot() {
   await load(true);
 }
 
-async function logout() {
-  try { await api('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+async function logout() {  try { await api('/api/auth/logout', { method: 'POST' }); } catch (_) {}
   App.clearSession();
   location.href = '/index.html';
 }
@@ -35,6 +34,7 @@ async function load(manual) {
     STATE = data.state;
     syncYard(data.yard || (STATE && STATE.yard));
     drawFirst = null;
+    renderPauseBanner(document.getElementById('pauseBannerHost'), STATE);
     renderYard();
     renderSide();
   } catch (e) { if (manual) toast(e.message, 'err'); }

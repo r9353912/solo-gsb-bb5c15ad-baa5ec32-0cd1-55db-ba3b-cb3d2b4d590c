@@ -44,9 +44,11 @@ router.post('/login/admin', (req, res) => {
 router.get('/yards', (req, res) => {
   const session = getSession(tokenOf(req));
   if (!session) return res.status(401).json({ ok: false, error: '未登录或会话已失效，请重新登录' });
+  const pauseMap = require('../pause').pauseMapAllYards();
+  const list = yards.listYards().map((y) => ({ ...y, paused: pauseMap.has(y.id) }));
   res.json({
     ok: true,
-    yards: yards.listYards(),
+    yards: list,
     currentYardId: session.currentYardId || ORIGINAL_YARD_ID
   });
 });

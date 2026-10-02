@@ -285,6 +285,25 @@ CREATE TABLE IF NOT EXISTS movement_plan_steps (
 CREATE INDEX IF NOT EXISTS idx_plan_steps_due
   ON movement_plan_steps(status, due_at);
 
+-- 演练副本暂停状态（单行 id=1；原站场永不停用，此表在原站场库中始终为空）：
+--  - 管理员可暂停"当前选中的命名演练副本"；暂停期间该副本一切手工业务变更
+--    （排路/走行/等待/取消/封锁/交接单/站场编辑/重置）由路由层拒绝，只读查询、
+--    会话切换照常；定时走行、延时取消、封锁复核、等待兑现等自动推进一律跳过本副本。
+--  - 暂停时冻结"活动走行计划下一步"与"待处理延时取消"的剩余等待：恢复事务内
+--    把对应 due_at / release_at 整体后移 (resumed_at - paused_at)，重复暂停/恢复
+--    不重复调整；暂停前已到期而未处理的事项恢复后立即按原规则复核。
+--  - 暂停跨服务重启有效：行持久化在业务库中，重启后各扫描仍跳过暂停副本，
+--    直到管理员恢复。只保留最近一次暂停/恢复记录（管理台/值班台显示用）。
+CREATE TABLE IF NOT EXISTS yard_pause (
+  id          INTEGER PRIMARY KEY CHECK (id=1),
+  -- paused 暂停中（全部手工变更与自动推进冻结）/ resumed 已恢复（保留最近一次记录）
+  status      TEXT NOT NULL CHECK (status IN ('paused','resumed')),
+  paused_by   TEXT,                       -- 暂停操作人（管理员姓名）
+  paused_at   INTEGER,                    -- 暂停时刻（epoch 毫秒）
+  resumed_by  TEXT,                       -- 恢复操作人
+  resumed_at  INTEGER                     -- 恢复时刻（epoch 毫秒）
+);
+
 CREATE INDEX IF NOT EXISTS idx_locks_instance ON route_locks(instance_id);
 CREATE INDEX IF NOT EXISTS idx_events_instance ON section_events(instance_id, seq);
 CREATE INDEX IF NOT EXISTS idx_steps_route ON route_steps(route_id, step_order);

@@ -11,7 +11,7 @@ let clockOffsetMs = 0;      // 服务器时钟 - 本地时钟（倒计时按服�
 
 const svg = document.getElementById('yard');
 const side = document.getElementById('side');
-const { el, html, api, toast, OCC_TEXT, SIG_TEXT, POS_TEXT, syncYard, renderYardBar } = App;
+const { el, html, api, toast, OCC_TEXT, SIG_TEXT, POS_TEXT, syncYard, renderYardBar, renderPauseBanner } = App;
 
 /* ------------------------------- 初始化 ------------------------------- */
 
@@ -41,6 +41,7 @@ async function load(manual) {
     syncYard(data.yard || (STATE && STATE.yard));
     // 服务器时钟与本地时钟偏差，倒计时据此校准（页面常开也不会漂）
     clockOffsetMs = (Date.parse(STATE.serverTime) || Date.now()) - (STATE.serverTimeMs || Date.now());
+    renderPauseBanner(document.getElementById('pauseBannerHost'), STATE);
     renderYard();
     renderSide();
     const ps = document.getElementById('pollState');
@@ -57,6 +58,12 @@ function startCountdown() {
   countdownTimer = setInterval(() => {
     document.querySelectorAll('[data-countdown-to]').forEach((node) => {
       const to = Number(node.getAttribute('data-countdown-to'));
+      // 暂停冻结：剩余时间停在暂停瞬间（冻结剩余秒数由渲染时写好，保持不变）
+      if (node.getAttribute('data-countdown-frozen') === '1') {
+        if (node.dataset.frozenText == null) node.dataset.frozenText = node.textContent;
+        node.textContent = node.dataset.frozenText;
+        return;
+      }
       const ms = to - (Date.now() + clockOffsetMs);
       node.textContent = ms <= 0 ? '到期处理中…' : formatRemaining(ms);
     });
@@ -69,6 +76,27 @@ function formatRemaining(ms) {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return s ? `${m} 分 ${s} 秒` : `${m} 分`;
+}
+
+/** 暂停冻结参考时刻（服务器时钟口径）：暂停中=暂停时刻，否则=当前墙钟 */
+function frozenNow() {
+  return (STATE.pause && STATE.pause.paused && STATE.pause.pausedAt)
+    ? STATE.pause.pausedAt : (Date.now() + clockOffsetMs);
+}
+
+/**
+ * 倒计时 <b>：暂停中冻结（data-countdown-frozen=1，文字停在剩余等待），
+ * 否则按服务器时钟实时倒数。
+ */
+function countdownNode(to) {
+  const paused = !!(STATE.pause && STATE.pause.paused);
+  const remain = to - frozenNow();
+  const node = html('b', paused
+    ? { 'data-countdown-to': String(to), 'data-countdown-frozen': '1' }
+    : { 'data-countdown-to': String(to) },
+    remain <= 0 ? '到期处理中…' : formatRemaining(remain));
+  if (paused) node.dataset.frozenText = node.textContent;
+  return node;
 }
 
 function pendingCancellationOf(instanceId) {
@@ -355,6 +383,14 @@ function renderRouteOps() {
   btns.appendChild(waitBtn);
   box.appendChild(btns);
 
+  // 暂停副本：排路/等待等手工变更禁用（预检只读仍可用；服务端同样强制拒绝）
+  if (STATE.pause && STATE.pause.paused) {
+    openBtn.disabled = true;
+    waitBtn.disabled = true;
+    box.appendChild(html('div', { class: 'reasons', style: 'margin-top:8px;' },
+      html('li', {}, '⏸ 当前演练副本已暂停：开放/等待等手工业务变更已冻结，恢复后再操作（预检为只读，仍可使用）。')));
+  }
+
   // 预检结果区
   const resultBox = html('div', { id: 'checkResult', style: 'margin-top:8px;' });
   box.appendChild(resultBox);
@@ -574,9 +610,8 @@ function renderCancellationCard(c) {
     `最早解除 ${new Date(c.releaseAt).toLocaleTimeString()}（`));
   if (c.status === 'pending') {
     line.appendChild(document.createTextNode('剩余 '));
-    line.appendChild(html('b', { 'data-countdown-to': String(c.releaseAt) },
-      formatRemaining(c.releaseAt - (Date.now() + clockOffsetMs))));
-    line.appendChild(document.createTextNode('）'));
+    line.appendChild(countdownNode(c.releaseAt));
+    line.appendChild(document.createTextNode(c.frozen ? '（暂停已冻结）' : ''));
   } else {
     line.appendChild(document.createTextNode('已处理）'));
   }
@@ -648,9 +683,8 @@ function renderMovementPlanCard(p) {
     line.appendChild(document.createTextNode(
       `下一步：${p.nextStep.actionText} 区段 ${p.nextStep.sectionId}，到期 ` +
       `${new Date(p.nextStep.dueAt).toLocaleTimeString()}（`));
-    line.appendChild(html('b', { 'data-countdown-to': String(p.nextStep.dueAt) },
-      formatRemaining(p.nextStep.dueAt - (Date.now() + clockOffsetMs))));
-    line.appendChild(document.createTextNode('）'));
+    line.appendChild(countdownNode(p.nextStep.dueAt));
+    line.appendChild(document.createTextNode(p.frozen ? '，暂停已冻结）' : '）'));
     card.appendChild(line);
   }
 
@@ -1064,10 +1098,10 @@ function renderInstanceCard(inst) {
       `⏱ 定时走行计划 #${plan.id}（${plan.applicant}）：下一步 第 ${plan.nextStep.step}/${plan.totalSteps} 步 ` +
       `${plan.nextStep.actionText} 区段 ${plan.nextStep.sectionId}，到期 ` +
       `${new Date(plan.nextStep.dueAt).toLocaleTimeString()}（剩余 `));
-    li.appendChild(html('b', { 'data-countdown-to': String(plan.nextStep.dueAt) },
-      formatRemaining(plan.nextStep.dueAt - (Date.now() + clockOffsetMs))));
+    li.appendChild(countdownNode(plan.nextStep.dueAt));
     li.appendChild(document.createTextNode(
-      '）。到期沿用现有序号与走行校验自动注入；人工事件抢先或申请延时取消会使计划停止。'));
+      plan.frozen ? '，暂停已冻结）。暂停期间不注入事件。'
+                  : '）。到期沿用现有序号与走行校验自动注入；人工事件抢先或申请延时取消会使计划停止。'));
     bar.appendChild(li);
     card.appendChild(bar);
   }
@@ -1081,11 +1115,12 @@ function renderInstanceCard(inst) {
     li.appendChild(document.createTextNode(
       `⏳ 延时取消申请 #${cancelReq.id}（${cancelReq.applicant}）：入口信号已回红，区段/道岔锁保留，` +
       '等待期内不会提前兑现；剩余 '));
-    li.appendChild(html('b', { 'data-countdown-to': String(cancelReq.releaseAt) },
-      formatRemaining(cancelReq.releaseAt - (Date.now() + clockOffsetMs))));
+    li.appendChild(countdownNode(cancelReq.releaseAt));
     li.appendChild(document.createTextNode(
-      `，最早 ${new Date(cancelReq.releaseAt).toLocaleTimeString()} 解除。` +
-      '期间收到首段走行占用即终止取消；到期重查不满足（区段占用/未知）则终止并保留锁闭。'));
+      cancelReq.frozen
+        ? '，暂停已冻结。暂停期间不到期处理。'
+        : `，最早 ${new Date(cancelReq.releaseAt).toLocaleTimeString()} 解除。` +
+          '期间收到首段走行占用即终止取消；到期重查不满足（区段占用/未知）则终止并保留锁闭。'));
     bar.appendChild(li);
     card.appendChild(bar);
   }

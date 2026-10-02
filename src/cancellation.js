@@ -234,6 +234,10 @@ function processOneInTxn(row) {
  */
 function processDue(trigger = 'timer') {
   const db = getDb();
+  // 暂停副本：到期处理（解除/终止）不得推进，等恢复时平移时刻后立即复核。
+  if (require('./pause').isPaused()) {
+    return { released: [], aborted: [] };
+  }
   const now = Date.now();
   const due = db.prepare(
     `SELECT * FROM cancellation_applications WHERE status='pending' AND release_at<=? ORDER BY release_at, id`
@@ -348,6 +352,14 @@ function clearAllByReset(reasonText) {
 function rowToRequest(row) {
   if (!row) return null;
   const now = Date.now();
+  // 暂停副本：剩余等待在暂停时刻被冻结——界面按"剩余=到期时刻−暂停时刻"显示，
+  // 不随墙钟递减；恢复时 release_at 整体后移后再恢复实时口径。
+  let pausedAt = 0;
+  if (row.status === 'pending') {
+    const pr = getDb().prepare(`SELECT status, paused_at FROM yard_pause WHERE id=1`).get();
+    if (pr && pr.status === 'paused') pausedAt = pr.paused_at;
+  }
+  const refNow = pausedAt || now;
   return {
     id: row.id,
     instanceId: row.instance_id,
@@ -357,8 +369,10 @@ function rowToRequest(row) {
     requestedAt: row.requested_at,
     releaseAt: row.release_at,
     processedAt: row.processed_at,
-    remainingMs: row.status === 'pending' ? Math.max(0, row.release_at - now) : 0,
-    overDue: row.status === 'pending' ? row.release_at <= now : false,
+    remainingMs: row.status === 'pending'
+      ? Math.max(0, row.release_at - refNow) : 0,
+    overDue: row.status === 'pending' ? row.release_at <= refNow : false,
+    frozen: !!pausedAt,                 // true=暂停中，剩余等待已冻结（界面倒计时停住）
     endReason: row.end_reason
   };
 }

@@ -169,7 +169,9 @@ const ALL_BUSINESS_TABLES = [
   'waiting_applications', 'cancellation_applications', 'blockade_applications',
   'handover_documents',
   // 定时走行计划不随副本复制，但旧单库整体迁移为原站场时随表迁移（保持数据完整）
-  'movement_plans', 'movement_plan_steps'
+  'movement_plans', 'movement_plan_steps',
+  // 副本暂停状态随表迁移（原站场该行恒不存在）
+  'yard_pause'
 ];
 
 /* ------------------------------ 副本创建 ------------------------------ */

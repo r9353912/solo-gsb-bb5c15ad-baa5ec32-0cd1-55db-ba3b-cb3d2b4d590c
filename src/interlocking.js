@@ -591,6 +591,8 @@ function getState() {
     serverTime: new Date().toISOString(),
     serverTimeMs: Date.now(),
     yard: currentYardInfo(),
+    // 命名演练副本暂停状态（原站场恒为 null；暂停时管理台/值班台显示横幅与暂停人/时间）
+    pause: require('./pause').activePause(),
     sections,
     switches,
     signals,

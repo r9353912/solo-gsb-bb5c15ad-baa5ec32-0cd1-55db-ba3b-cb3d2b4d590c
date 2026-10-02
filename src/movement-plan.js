@@ -366,6 +366,11 @@ function processPlanInTxn(plan) {
  */
 function processDue(trigger = 'timer') {
   const db = getDb();
+  // 暂停副本：定时走行不得注入任何事件（恢复时已排期步骤的 due_at 已平移，
+  // 逾期步骤恢复后立即依序处理）。直接短路，保证不推进暂停副本。
+  if (require('./pause').isPaused()) {
+    return { processed: [], completed: [], aborted: [] };
+  }
   const now = Date.now();
   const duePlans = db.prepare(
     `SELECT p.* FROM movement_plans p
@@ -491,10 +496,21 @@ function rowToStep(row, now) {
   };
 }
 
+/**
+ * 当前站场暂停时刻（epoch 毫秒）；未暂停返回 0。
+ * 计划下一步的剩余等待在暂停期间按此时刻显示（冻结，不随墙钟递减）。
+ */
+function pausedReferenceNow(now) {
+  const pr = getDb().prepare(`SELECT status, paused_at FROM yard_pause WHERE id=1`).get();
+  return pr && pr.status === 'paused' ? pr.paused_at : now;
+}
+
 function rowToPlan(row) {
   if (!row) return null;
   const db = getDb();
-  const now = Date.now();
+  const wallNow = Date.now();
+  const now = pausedReferenceNow(wallNow); // 暂停中：剩余等待按暂停时刻显示（冻结）
+  const frozen = now !== wallNow;
   const stepRows = db.prepare(
     `SELECT * FROM movement_plan_steps WHERE plan_id=? ORDER BY step_order`
   ).all(row.id);
@@ -513,6 +529,7 @@ function rowToPlan(row) {
     createdAt: row.created_at,
     endedAt: row.ended_at,
     endReason: row.end_reason,
+    frozen,                             // true=暂停中，下一步剩余等待已冻结
     nextStep,                           // 下一步（编号/动作/区段/到期时刻）；无则 null
     steps                               // 全量步骤（查看计划时返回）
   };
