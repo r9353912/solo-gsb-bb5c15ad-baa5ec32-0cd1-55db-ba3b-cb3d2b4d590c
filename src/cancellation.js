@@ -63,7 +63,7 @@ function setProtectionSeconds(seconds) {
  */
 function requestCancellation(instanceId, clientName) {
   const db = getDb();
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
   const run = db.transaction(() => {
     const inst = db.prepare(`SELECT * FROM route_instances WHERE id=?`).get(instanceId);
     if (!inst || inst.status !== 'open') {
@@ -153,7 +153,7 @@ function abortPendingByOccupyInTxn(instanceId) {
  */
 function processOneInTxn(row) {
   const db = getDb();
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
 
   const inst = db.prepare(`SELECT * FROM route_instances WHERE id=?`).get(row.instance_id);
 
@@ -234,7 +234,7 @@ function processOneInTxn(row) {
  */
 function processDue(trigger = 'timer') {
   const db = getDb();
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
   const due = db.prepare(
     `SELECT * FROM cancellation_applications WHERE status='pending' AND release_at<=? ORDER BY release_at, id`
   ).all(now);
@@ -291,6 +291,7 @@ function processDueAllYards(trigger) {
   const released = [];
   const aborted = [];
   for (const y of yardsList) {
+    if (require('./pause').isPaused(y.id)) continue;
     try {
       const r = withYard(y.id, () => processDue(trigger + `:yard${y.id}`));
       for (const id of r.released) released.push({ yard: y.id, id });
@@ -347,7 +348,7 @@ function clearAllByReset(reasonText) {
 
 function rowToRequest(row) {
   if (!row) return null;
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
   return {
     id: row.id,
     instanceId: row.instance_id,

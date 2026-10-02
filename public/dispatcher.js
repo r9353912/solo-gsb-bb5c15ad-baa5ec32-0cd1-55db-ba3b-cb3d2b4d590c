@@ -51,13 +51,19 @@ async function load(manual) {
   }
 }
 
+function effectiveNow() {
+  const pausedAt = STATE && STATE.yard && STATE.yard.pausedAt;
+  if (STATE && STATE.yard && STATE.yard.paused && pausedAt) return Number(pausedAt);
+  return Date.now() + clockOffsetMs;
+}
+
 /** 每 0.5s 只刷新倒计时文字（不重新拉取状态，避免输入框失焦） */
 function startCountdown() {
   if (countdownTimer) return;
   countdownTimer = setInterval(() => {
     document.querySelectorAll('[data-countdown-to]').forEach((node) => {
       const to = Number(node.getAttribute('data-countdown-to'));
-      const ms = to - (Date.now() + clockOffsetMs);
+      const ms = to - effectiveNow();
       node.textContent = ms <= 0 ? '到期处理中…' : formatRemaining(ms);
     });
   }, 500);

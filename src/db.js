@@ -73,12 +73,65 @@ function getMainDb() {
   mainDb.exec(readSql('schema-yard.sql'));
 
   // 旧库升级：sessions 表补充当前站场列（不设外键级联，未知副本由鉴权层拒绝）
-  const cols = mainDb.prepare(`PRAGMA table_info(sessions)`).all();
-  if (!cols.some((c) => c.name === 'current_yard_id')) {
+  const sessionCols = mainDb.prepare(`PRAGMA table_info(sessions)`).all();
+  if (!sessionCols.some((c) => c.name === 'current_yard_id')) {
     mainDb.exec(`ALTER TABLE sessions ADD COLUMN current_yard_id INTEGER`);
   }
+  migrateYardsPauseColumns(mainDb);
 
   return mainDb;
+}
+
+/** 旧库升级：站场注册增加暂停列，并把 status CHECK 扩展为 active/paused。 */
+function migrateYardsPauseColumns(db) {
+  const cols = db.prepare(`PRAGMA table_info(yards)`).all();
+  const addColumn = (name, ddl) => {
+    if (!cols.some((c) => c.name === name)) db.exec(`ALTER TABLE yards ADD COLUMN ${ddl}`);
+  };
+  addColumn('paused_by', 'paused_by TEXT');
+  addColumn('paused_at', 'paused_at INTEGER');
+  addColumn('resumed_by', 'resumed_by TEXT');
+  addColumn('resumed_at', 'resumed_at INTEGER');
+
+  const ddl = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='yards'`).get().sql;
+  if (ddl.includes("'paused'")) return;
+
+  const previousForeignKeys = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  try {
+    const seqRow = db.prepare(`SELECT seq FROM sqlite_sequence WHERE name='yards'`).get();
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE yards_new (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          name       TEXT NOT NULL UNIQUE,
+          kind       TEXT NOT NULL DEFAULT 'copy'
+                     CHECK (kind IN ('original','copy')),
+          source_yard_id INTEGER REFERENCES yards(id),
+          status     TEXT NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active','paused')),
+          db_file    TEXT NOT NULL,
+          created_by TEXT,
+          paused_by TEXT,
+          paused_at INTEGER,
+          resumed_by TEXT,
+          resumed_at INTEGER,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO yards_new(id,name,kind,source_yard_id,status,db_file,created_by,
+                              paused_by,paused_at,resumed_by,resumed_at,created_at)
+        SELECT id,name,kind,source_yard_id,status,db_file,created_by,
+               paused_by,paused_at,resumed_by,resumed_at,created_at FROM yards;
+        DROP TABLE yards;
+        ALTER TABLE yards_new RENAME TO yards;
+      `);
+      if (seqRow) {
+        db.prepare(`INSERT OR REPLACE INTO sqlite_sequence(name,seq) VALUES('yards', ?)`).run(seqRow.seq);
+      }
+    })();
+  } finally {
+    db.pragma(`foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+  }
 }
 
 /** 打开（带建表）一个站场业务库连接 */

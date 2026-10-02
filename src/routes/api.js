@@ -8,10 +8,23 @@ const cancellation = require('../cancellation');
 const blockade = require('../blockade');
 const handover = require('../handover');
 const movementPlan = require('../movement-plan');
+const pause = require('../pause');
 const { InterlockError } = require('../interlocking');
 
 const router = express.Router();
 router.use(requireAuth('dispatcher'));
+
+// 暂停副本：值班台只读查询与会话切换照常，所有手工业务变更拒绝。
+// 预检 /routes/:id/check 是只读校验，也照常返回。
+router.use((req, _res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || /^\/routes\/[^/]+\/check$/.test(req.path)) {
+    return next();
+  }
+  try {
+    pause.assertActive(req.yard.id);
+    next();
+  } catch (e) { next(e); }
+});
 
 function wrap(fn) {
   return (req, res, next) => {

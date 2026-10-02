@@ -81,7 +81,8 @@ router.post('/logout', (req, res) => {
     for (const y of yards.listYards()) {
       try {
         withYard(y.id, () => waiting.cancelByApplicant(
-          session.name, '申请人退出登录，等待申请撤销'));
+          session.name, '申请人退出登录，等待申请撤销',
+          { skipSweep: y.paused }));
       } catch (e) { console.error(`[waiting] 退出撤销失败（站场 ${y.id}）:`, e); }
     }
   }

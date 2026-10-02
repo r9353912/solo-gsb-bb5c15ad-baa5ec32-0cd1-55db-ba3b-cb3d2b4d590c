@@ -65,10 +65,12 @@ function yardByName(name) {
 function listYards() {
   return getMainDb()
     .prepare(`SELECT id, name, kind, source_yard_id AS sourceYardId, status,
-                     created_by AS createdBy, created_at AS createdAt
+                     created_by AS createdBy, paused_by AS pausedBy,
+                     paused_at AS pausedAt, resumed_by AS resumedBy,
+                     resumed_at AS resumedAt, created_at AS createdAt
                 FROM yards ORDER BY id`)
     .all()
-    .map((y) => ({ ...y, isOriginal: y.id === ORIGINAL_YARD_ID }));
+    .map((y) => ({ ...y, isOriginal: y.id === ORIGINAL_YARD_ID, paused: y.status === 'paused' }));
 }
 
 /**
@@ -401,6 +403,11 @@ function serializeYard(row) {
     isOriginal: row.id === ORIGINAL_YARD_ID,
     sourceYardId: row.source_yard_id,
     status: row.status,
+    paused: row.status === 'paused',
+    pausedBy: row.paused_by,
+    pausedAt: row.paused_at,
+    resumedBy: row.resumed_by,
+    resumedAt: row.resumed_at,
     createdBy: row.created_by,
     createdAt: row.created_at
   };
@@ -424,12 +431,13 @@ function resolveSessionYard(yardIdRaw) {
     throw err;
   }
   const row = yardRow(yardId);
-  if (!row || row.status !== 'active') {
+  if (!row) {
     const err = new Error(`未知演练副本 #${yardId}：该站场不存在`);
     err.status = 404;
     err.code = 'YARD_NOT_FOUND';
     throw err;
   }
+  // paused 副本仍允许会话切换与只读查询；写操作由路由层统一拒绝。
   return row;
 }
 

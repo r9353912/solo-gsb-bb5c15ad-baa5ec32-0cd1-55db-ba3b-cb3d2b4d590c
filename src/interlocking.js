@@ -621,7 +621,12 @@ function currentYardInfo() {
   try {
     const y = require('./yards').getYard(id);
     if (!y) return null;
-    return { id: y.id, name: y.name, isOriginal: y.isOriginal, kind: y.kind };
+    return {
+      id: y.id, name: y.name, isOriginal: y.isOriginal, kind: y.kind,
+      status: y.status, paused: y.paused,
+      pausedBy: y.pausedBy, pausedAt: y.pausedAt,
+      resumedBy: y.resumedBy, resumedAt: y.resumedAt
+    };
   } catch (_) {
     // yards 表不可用等极端场景不阻塞状态读取
     return { id, name: id === 1 ? '原站场' : `#${id}`, isOriginal: id === 1, kind: id === 1 ? 'original' : 'copy' };

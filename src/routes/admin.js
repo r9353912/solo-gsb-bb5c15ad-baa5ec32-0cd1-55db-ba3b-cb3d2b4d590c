@@ -10,9 +10,21 @@ const blockade = require('../blockade');
 const handover = require('../handover');
 const yards = require('../yards');
 const movementPlan = require('../movement-plan');
+const pause = require('../pause');
+const { withYard } = require('../db');
 
 const router = express.Router();
 router.use(requireAuth('admin'));
+
+// 暂停副本：除暂停/恢复自身与从原站场创建副本外，管理台所有写操作均拒绝。
+router.use((req, _res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') return next();
+  if (['/yards', '/yards/current/pause', '/yards/current/resume'].includes(req.path)) return next();
+  try {
+    pause.assertActive(req.yard.id);
+    next();
+  } catch (e) { next(e); }
+});
 
 const ID_RE = /^[A-Za-z0-9_一-龥-]{1,20}$/;
 const NUM = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -58,6 +70,35 @@ router.post('/yards', wrap((req, res) => {
     yard: result.yard,                 // 副本编号（yard.id）与状态 status
     detail: result.detail
   });
+}));
+
+// 暂停当前选中的命名演练副本；原站场拒绝。重复暂停幂等，不改变暂停时间。
+router.post('/yards/current/pause', wrap((req, res) => {
+  const result = pause.pauseCurrentYard(req.yard.id, req.session.name);
+  res.json({ ok: true, ...result });
+}));
+
+// 恢复当前副本：平移活动走行计划下一步与待处理延时取消的剩余等待；
+// 已在暂停期间到期的事项平移后立即到期，由本接口事务外按原规则复核。
+router.post('/yards/current/resume', wrap((req, res) => {
+  const result = pause.resumeCurrentYard(req.yard.id, req.session.name);
+  if (result.changed) {
+    try { withYard(req.yard.id, () => blockade.refreshBlockadeStates('yard_resumed')); } catch (e) {
+      console.error('[pause] 恢复后封锁复核失败:', e);
+    }
+    try { withYard(req.yard.id, () => movementPlan.processDue('yard_resumed')); } catch (e) {
+      console.error('[pause] 恢复后定时走行扫描失败:', e);
+    }
+    try { withYard(req.yard.id, () => cancellation.processDue('yard_resumed')); } catch (e) {
+      console.error('[pause] 恢复后延时取消扫描失败:', e);
+    }
+    // 前面的走行/取消处理可能释放资源；最后统一兑现等待申请
+    try { withYard(req.yard.id, () => waiting.sweepFulfillments('yard_resumed')); } catch (e) {
+      console.error('[pause] 恢复后等待兑现扫描失败:', e);
+    }
+    result.yard = yards.getYard(req.yard.id);
+  }
+  res.json({ ok: true, ...result });
 }));
 
 /* ----------------------------- 延时取消设置 ----------------------------- */

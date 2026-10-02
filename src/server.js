@@ -14,6 +14,7 @@ const waiting = require('./waiting');
 const cancellation = require('./cancellation');
 const blockade = require('./blockade');
 const movementPlan = require('./movement-plan');
+const pause = require('./pause');
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -34,6 +35,7 @@ withYard(original.id, () => {
 // 服务重启后按各站场分别复核：待生效封锁转已生效、等待申请自动兑现、
 // 延时取消按原 release_at 复核（副本不重新计时、不重复兑现）。
 for (const y of yards.listYards()) {
+  if (pause.isPaused(y.id)) continue;
   withYard(y.id, () => {
     try {
       const activated = blockade.refreshBlockadeStates('server_start');

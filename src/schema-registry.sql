@@ -15,9 +15,13 @@ CREATE TABLE IF NOT EXISTS yards (
   -- 来源：副本固定从原站场复制；原站场为 NULL
   source_yard_id INTEGER REFERENCES yards(id),
   status     TEXT NOT NULL DEFAULT 'active'
-             CHECK (status IN ('active')),
+             CHECK (status IN ('active','paused')),
   db_file    TEXT NOT NULL,               -- 业务库文件名（相对主库目录的 yards/ 子目录）
   created_by TEXT,                        -- 创建人（副本=管理员姓名）
+  paused_by TEXT,                         -- 暂停操作人（仅副本可暂停）
+  paused_at INTEGER,                      -- 暂停时刻（epoch 毫秒）
+  resumed_by TEXT,                        -- 最近恢复操作人
+  resumed_at INTEGER,                     -- 最近恢复时刻（epoch 毫秒）
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

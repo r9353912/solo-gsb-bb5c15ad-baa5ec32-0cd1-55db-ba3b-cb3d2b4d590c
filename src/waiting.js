@@ -171,7 +171,7 @@ function cancelApplication(applicationId, clientName) {
  * 申请人退出登录：撤销其全部未兑现申请（与主动撤销路径区分，写明原因）。
  * 在鉴权路由中调用。
  */
-function cancelByApplicant(applicant, reason) {
+function cancelByApplicant(applicant, reason, options = {}) {
   const db = getDb();
   db.transaction(() => {
     db.prepare(
@@ -180,7 +180,7 @@ function cancelByApplicant(applicant, reason) {
         WHERE applicant=? AND status='waiting'`
     ).run(reason || '申请人退出登录，等待申请撤销', applicant);
   })();
-  sweepFulfillments('applicant_logout');
+  if (!options.skipSweep) sweepFulfillments('applicant_logout');
 }
 
 /* --------------------------- 定义变更 / 管理员重置 --------------------------- */

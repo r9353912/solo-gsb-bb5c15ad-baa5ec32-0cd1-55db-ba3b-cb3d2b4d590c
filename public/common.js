@@ -128,7 +128,7 @@ const App = (() => {
     host.appendChild(label);
     const sel = html('select', { class: 'yard-select', title: '选择当前站场（原站场或命名演练副本）' });
     for (const y of yards) {
-      const text = y.isOriginal ? '① 原站场' : `🧪 ${y.name}`;
+      const text = y.isOriginal ? '① 原站场' : `${y.paused ? '⏸' : '🧪'} ${y.name}`;
       const o = html('option', { value: String(y.id) }, text);
       if (y.id === yardId()) o.selected = true;
       sel.appendChild(o);
@@ -141,7 +141,22 @@ const App = (() => {
 
     const cur = yards.find((y) => y.id === yardId());
     if (cur && !cur.isOriginal) {
-      host.appendChild(html('span', { class: 'yard-badge' }, '演练副本'));
+      host.appendChild(html('span', {
+        class: `yard-badge ${cur.paused ? 'paused' : ''}`,
+        title: cur.paused
+          ? `暂停人：${cur.pausedBy || '未知'}；暂停时间：${formatTime(cur.pausedAt)}`
+          : '命名演练副本'
+      }, cur.paused ? '已暂停' : '演练副本'));
+      if (role() === 'admin') {
+        const btn = html('button', { class: 'ghost small', style: 'margin-left:6px;' },
+          cur.paused ? '恢复演练' : '暂停演练');
+        btn.addEventListener('click', () => togglePause(cur, btn));
+        host.appendChild(btn);
+      }
+      if (cur.paused) {
+        host.appendChild(html('span', { class: 'pause-info' },
+          `暂停：${cur.pausedBy || '未知'} · ${formatTime(cur.pausedAt)}`));
+      }
     }
 
     if (role() === 'admin') {
@@ -207,9 +222,31 @@ const App = (() => {
     setTimeout(() => nameIn.focus(), 0);
   }
 
+  function formatTime(ms) {
+    if (!ms) return '—';
+    return new Date(Number(ms)).toLocaleString();
+  }
+
+  async function togglePause(yard, btn) {
+    const action = yard.paused ? 'resume' : 'pause';
+    const label = yard.paused ? '恢复' : '暂停';
+    if (!confirm(`确认${label}命名演练副本「${yard.name}」？`)) return;
+    btn.disabled = true;
+    try {
+      const data = await api(`/api/admin/yards/current/${action}`, { method: 'POST' });
+      if (data.alreadyPaused) toast('该副本已处于暂停状态', 'info');
+      else if (data.alreadyResumed) toast('该副本已处于运行状态', 'info');
+      else toast(`副本「${yard.name}」已${label}`, 'ok');
+      location.reload();
+    } catch (e) {
+      btn.disabled = false;
+      toast(e.message, 'err', 6000);
+    }
+  }
+
   return {
     api, el, html, toast, token, setSession, clearSession, role, name,
-    yardId, yardName, setYard, chooseYard, syncYard, renderYardBar,
+    yardId, yardName, setYard, chooseYard, syncYard, renderYardBar, formatTime,
     OCC_TEXT, SIG_TEXT, POS_TEXT
   };
 })();

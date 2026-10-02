@@ -102,7 +102,7 @@ function validateSteps(routeSteps, rawSteps) {
  */
 function submitPlan(instanceId, rawSteps, applicant) {
   const db = getDb();
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
 
   const run = db.transaction(() => {
     const inst = db.prepare(`SELECT * FROM route_instances WHERE id=?`).get(instanceId);
@@ -366,7 +366,7 @@ function processPlanInTxn(plan) {
  */
 function processDue(trigger = 'timer') {
   const db = getDb();
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
   const duePlans = db.prepare(
     `SELECT p.* FROM movement_plans p
       WHERE p.status='active'
@@ -432,6 +432,7 @@ function processDueAllYards(trigger) {
   if (!yardsList) return processDue(trigger); // yards 注册表不可用（脚本直调）
   const summary = [];
   for (const y of yardsList) {
+    if (require('./pause').isPaused(y.id)) continue;
     try {
       const r = withYard(y.id, () => processDue(`${trigger}:yard${y.id}`));
       summary.push({ yard: y.id, ...r });
@@ -494,7 +495,7 @@ function rowToStep(row, now) {
 function rowToPlan(row) {
   if (!row) return null;
   const db = getDb();
-  const now = Date.now();
+  const now = require('./pause').effectiveNow();
   const stepRows = db.prepare(
     `SELECT * FROM movement_plan_steps WHERE plan_id=? ORDER BY step_order`
   ).all(row.id);
